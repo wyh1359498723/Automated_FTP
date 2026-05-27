@@ -1,0 +1,48 @@
+@Automated_FTP_HostAddress = http://localhost:5028
+
+### 主上传流程
+POST {{Automated_FTP_HostAddress}}/api/upload
+Content-Type: application/json
+
+{
+  "custCode": "C001",
+  "device": "DEV01",
+  "cp": "CP1",
+  "variables": {
+    "wflot": "WL202605270001"
+  }
+}
+
+### 仅检查文件
+POST {{Automated_FTP_HostAddress}}/api/diagnostics/file-check
+Content-Type: application/json
+
+{
+  "custCode": "C001",
+  "device": "DEV01",
+  "cp": "CP1",
+  "variables": {
+    "wflot": "WL202605270001"
+  }
+}
+
+### 仅检查 FTP 连接
+POST {{Automated_FTP_HostAddress}}/api/diagnostics/ftp-check
+Content-Type: application/json
+
+{
+  "custCode": "C001",
+  "device": "DEV01",
+  "cp": "CP1",
+  "variables": {
+    "wflot": "WL202605270001"
+  }
+}
+
+### 把明文密码加密成可入库的密文
+POST {{Automated_FTP_HostAddress}}/api/diagnostics/protect-password
+Content-Type: application/json
+
+{
+  "plainText": "your-plain-password"
+}
