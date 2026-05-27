@@ -13,7 +13,7 @@ public class OracleOptions
 
 public class UploadOptions
 {
-    public string ConfigTableName { get; set; } = "FTP_UPLOAD_CONFIG";
+    public string ConfigTableName { get; set; } = "MMS_FTP_UPLOAD_CONFIG";
     public int DefaultFtpTimeoutSeconds { get; set; } = 30;
 }
 
