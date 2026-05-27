@@ -101,47 +101,16 @@ public class FtpUploadService : IFtpUploadService
             return result;
         }
 
-        var allOk = true;
-        foreach (var src in files)
+        bool allOk;
+        if (processor is IBatchFileProcessor batchProcessor)
         {
-            var perFile = new UploadFileResult { SourceFile = src };
-            var sw = Stopwatch.StartNew();
-            ProcessResult? processed = null;
-            try
-            {
-                processed = await processor.ProcessAsync(src, config.ProcessorParam, vars, ct);
-                perFile.ProcessedFile = processed.ProcessedFile;
-
-                // 改名器始终基于源文件名计算目标名，但额外注入 {processedExt} 方便 ZIP 等场景
-                var renameVars = new Dictionary<string, string?>(vars, StringComparer.OrdinalIgnoreCase)
-                {
-                    ["processedExt"] = Path.GetExtension(processed.ProcessedFile),
-                };
-                var targetName = renamer.Rename(src, config.RenamerParam, renameVars);
-                perFile.TargetFileName = targetName;
-                perFile.TargetPath = JoinRemote(targetDir, targetName);
-
-                await client.UploadAsync(processed.ProcessedFile, perFile.TargetPath, ct);
-                perFile.Success = true;
-            }
-            catch (Exception ex)
-            {
-                allOk = false;
-                perFile.Success = false;
-                perFile.Error = ex.Message;
-                _logger.LogError(ex, "上传文件失败 {File}", src);
-            }
-            finally
-            {
-                if (processed is { IsTemporary: true } && File.Exists(processed.ProcessedFile))
-                {
-                    try { File.Delete(processed.ProcessedFile); }
-                    catch (Exception ex) { _logger.LogWarning(ex, "清理临时文件失败 {File}", processed.ProcessedFile); }
-                }
-                sw.Stop();
-                perFile.DurationMs = sw.ElapsedMilliseconds;
-                result.Files.Add(perFile);
-            }
+            allOk = await UploadBatchAsync(
+                batchProcessor, files, config, renamer, vars, targetDir, client, result, ct);
+        }
+        else
+        {
+            allOk = await UploadPerFileAsync(
+                processor, files, config, renamer, vars, targetDir, client, result, ct);
         }
 
         result.Success = allOk;
@@ -216,6 +185,122 @@ public class FtpUploadService : IFtpUploadService
             result.DurationMs = sw.ElapsedMilliseconds;
         }
         return result;
+    }
+
+    /// <summary>逐文件处理并上传（PassThrough / ZipCompress 等单文件处理器）。</summary>
+    private async Task<bool> UploadPerFileAsync(
+        IFileProcessor processor,
+        IReadOnlyList<string> files,
+        Models.FtpUploadConfig config,
+        IFileRenamer renamer,
+        Dictionary<string, string?> vars,
+        string targetDir,
+        IFileTransferClient client,
+        UploadResult result,
+        CancellationToken ct)
+    {
+        var allOk = true;
+        foreach (var src in files)
+        {
+            var perFile = new UploadFileResult { SourceFile = src };
+            var sw = Stopwatch.StartNew();
+            ProcessResult? processed = null;
+            try
+            {
+                processed = await processor.ProcessAsync(src, config.ProcessorParam, vars, ct);
+                perFile.ProcessedFile = processed.ProcessedFile;
+
+                var renameVars = new Dictionary<string, string?>(vars, StringComparer.OrdinalIgnoreCase)
+                {
+                    ["processedExt"] = Path.GetExtension(processed.ProcessedFile),
+                };
+                var targetName = renamer.Rename(src, config.RenamerParam, renameVars);
+                perFile.TargetFileName = targetName;
+                perFile.TargetPath = JoinRemote(targetDir, targetName);
+
+                await client.UploadAsync(processed.ProcessedFile, perFile.TargetPath, ct);
+                perFile.Success = true;
+            }
+            catch (Exception ex)
+            {
+                allOk = false;
+                perFile.Success = false;
+                perFile.Error = ex.Message;
+                _logger.LogError(ex, "上传文件失败 {File}", src);
+            }
+            finally
+            {
+                CleanTemp(processed);
+                sw.Stop();
+                perFile.DurationMs = sw.ElapsedMilliseconds;
+                result.Files.Add(perFile);
+            }
+        }
+        return allOk;
+    }
+
+    /// <summary>
+    /// 批量处理：所有文件合并成一个输出（如 ZipCompressAll），只上传一次。
+    /// UploadFileResult.SourceFile 列出所有源文件路径（换行分隔）。
+    /// </summary>
+    private async Task<bool> UploadBatchAsync(
+        IBatchFileProcessor processor,
+        IReadOnlyList<string> files,
+        Models.FtpUploadConfig config,
+        IFileRenamer renamer,
+        Dictionary<string, string?> vars,
+        string targetDir,
+        IFileTransferClient client,
+        UploadResult result,
+        CancellationToken ct)
+    {
+        var perFile = new UploadFileResult
+        {
+            SourceFile = string.Join("\n", files),
+        };
+        var sw = Stopwatch.StartNew();
+        ProcessResult? processed = null;
+        try
+        {
+            processed = await processor.ProcessBatchAsync(files, config.ProcessorParam, vars, ct);
+            perFile.ProcessedFile = processed.ProcessedFile;
+
+            // 批量时以第一个源文件作为改名的"原始文件"参考
+            var renameVars = new Dictionary<string, string?>(vars, StringComparer.OrdinalIgnoreCase)
+            {
+                ["processedExt"] = Path.GetExtension(processed.ProcessedFile),
+                ["fileCount"]    = files.Count.ToString(),
+            };
+            var targetName = renamer.Rename(files[0], config.RenamerParam, renameVars);
+            perFile.TargetFileName = targetName;
+            perFile.TargetPath = JoinRemote(targetDir, targetName);
+
+            await client.UploadAsync(processed.ProcessedFile, perFile.TargetPath, ct);
+            perFile.Success = true;
+        }
+        catch (Exception ex)
+        {
+            perFile.Success = false;
+            perFile.Error = ex.Message;
+            _logger.LogError(ex, "批量上传失败（{Count} 个文件）", files.Count);
+        }
+        finally
+        {
+            CleanTemp(processed);
+            sw.Stop();
+            perFile.DurationMs = sw.ElapsedMilliseconds;
+            result.Files.Add(perFile);
+        }
+        return perFile.Success;
+    }
+
+    private void CleanTemp(ProcessResult? processed)
+    {
+        if (processed is { IsTemporary: true } && File.Exists(processed.ProcessedFile))
+        {
+            try { File.Delete(processed.ProcessedFile); }
+            catch (Exception ex) { _logger.LogWarning(ex, "清理临时文件失败 {File}", processed.ProcessedFile); }
+        }
     }
 
     /// <summary>

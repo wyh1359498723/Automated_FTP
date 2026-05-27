@@ -43,6 +43,7 @@ builder.Services.AddSingleton<FileTransferClientFactory>();
 // 文件处理策略
 builder.Services.AddSingleton<IFileProcessor, PassThroughProcessor>();
 builder.Services.AddSingleton<IFileProcessor, ZipCompressProcessor>();
+builder.Services.AddSingleton<IFileProcessor, ZipCompressAllProcessor>();
 builder.Services.AddSingleton<FileProcessorRegistry>();
 
 // 改名策略
