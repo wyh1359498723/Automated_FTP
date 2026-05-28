@@ -13,6 +13,20 @@ Content-Type: application/json
   }
 }
 
+### 主上传流程（指定 configIds）
+POST {{Automated_FTP_HostAddress}}/api/upload
+Content-Type: application/json
+
+{
+  "custCode": "C001",
+  "device": "DEV01",
+  "cp": "CP1",
+  "variables": {
+    "wflot": "WL202605270001"
+  },
+  "configIds": [3, 7]
+}
+
 ### 仅检查文件
 POST {{Automated_FTP_HostAddress}}/api/diagnostics/file-check
 Content-Type: application/json

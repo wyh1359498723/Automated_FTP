@@ -9,6 +9,14 @@ using Microsoft.AspNetCore.DataProtection;
 var builder = WebApplication.CreateBuilder(args);
 
 builder.Services.AddControllers();
+builder.Services.AddCors(options =>
+{
+    options.AddPolicy("DevCors", policy =>
+        policy
+            .SetIsOriginAllowed(_ => true)
+            .AllowAnyHeader()
+            .AllowAnyMethod());
+});
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen(c =>
 {
@@ -56,13 +64,14 @@ builder.Services.AddScoped<IFtpUploadService, FtpUploadService>();
 
 var app = builder.Build();
 
+app.UseCors("DevCors");
+
 if (app.Environment.IsDevelopment())
 {
     app.UseSwagger();
     app.UseSwaggerUI();
 }
 
-app.UseHttpsRedirection();
 app.UseAuthorization();
 
 // 兜底异常处理：把未捕获异常包装成统一 JSON 错误结构。
@@ -71,6 +80,15 @@ app.Use(async (ctx, next) =>
     try
     {
         await next();
+    }
+    catch (BadHttpRequestException ex)
+    {
+        if (!ctx.Response.HasStarted)
+        {
+            ctx.Response.StatusCode = StatusCodes.Status400BadRequest;
+            ctx.Response.ContentType = "application/json; charset=utf-8";
+            await ctx.Response.WriteAsJsonAsync(new { success = false, error = ex.Message });
+        }
     }
     catch (Exception ex)
     {

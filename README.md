@@ -6,12 +6,8 @@
 
 API 调用者传入业务键 `(custCode, device, cp)` 与变量字典（如 `wflot`），后台：
 
-1. 用业务键到 Oracle `FTP_UPLOAD_CONFIG` 表查唯一的启用配置
-2. 用变量字典渲染源目录 / 关键词 / 目标目录中的占位符
-3. 在源目录按关键词找文件
-4. 调用配置指定的 `IFileProcessor` 处理文件
-5. 调用配置指定的 `IFileRenamer` 生成目标文件名
-6. 按配置 `FTP_PROTOCOL` 选择 FTP / FTPS / SFTP 客户端，连接并上传
+1. 用业务键到 Oracle `MMS_FTP_UPLOAD_CONFIG` 表查**所有**启用配置（同一业务键可有多条）
+2. 按 ID 顺序逐条执行：渲染路径 → 找文件 → 处理 → 改名 → 上传
 
 ## 依赖
 
@@ -51,16 +47,19 @@ API 调用者传入业务键 `(custCode, device, cp)` 与变量字典（如 `wfl
 
 ### `POST /api/upload`
 
-主流程。Body：
+主流程。按 `(custCode, device, cp)` 匹配**所有启用配置**并依次上传。Body：
 
 ```json
 {
   "custCode": "C001",
   "device": "DEV01",
   "cp": "CP1",
-  "variables": { "wflot": "WL202605270001" }
+  "variables": { "wflot": "WL202605270001" },
+  "configIds": [3, 7]
 }
 ```
+
+`configIds` 可选：不传或空数组 = 执行该业务键下全部启用配置；传 ID 数组 = 只执行指定配置（须属于该业务键且已启用）。
 
 ### `POST /api/diagnostics/file-check`
 

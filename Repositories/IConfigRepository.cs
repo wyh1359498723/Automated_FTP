@@ -4,8 +4,12 @@ namespace Automated_FTP.Repositories;
 
 public interface IConfigRepository
 {
-    /// <summary>按业务键查唯一配置；找不到或已禁用返回 null。</summary>
-    Task<FtpUploadConfig?> FindByKeyAsync(string custCode, string device, string cp, CancellationToken ct = default);
+    /// <summary>按业务键查所有启用配置（0..N 条，按 ID 升序）。</summary>
+    Task<IReadOnlyList<FtpUploadConfig>> FindAllByKeyAsync(string custCode, string device, string cp, CancellationToken ct = default);
+
+    /// <summary>按 ID 列表 + 业务键查启用配置（按 ID 升序）。</summary>
+    Task<IReadOnlyList<FtpUploadConfig>> FindByIdsAndKeyAsync(
+        string custCode, string device, string cp, IEnumerable<long> configIds, CancellationToken ct = default);
 
     /// <summary>按 ID 查配置（含禁用行）。</summary>
     Task<FtpUploadConfig?> GetByIdAsync(long id, CancellationToken ct = default);

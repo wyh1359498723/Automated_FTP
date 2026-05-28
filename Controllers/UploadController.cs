@@ -16,7 +16,7 @@ public class UploadController : ControllerBase
     }
 
     /// <summary>
-    /// 主上传流程：按 (custCode,device,cp) 匹配配置，扫描源目录，处理 + 改名 + 上传。
+    /// 主上传流程：按 (custCode,device,cp) 匹配配置；可选 configIds 指定子集，扫描源目录，处理 + 改名 + 上传。
     /// </summary>
     [HttpPost]
     [ProducesResponseType(typeof(UploadResult), StatusCodes.Status200OK)]

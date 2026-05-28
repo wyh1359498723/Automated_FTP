@@ -23,4 +23,10 @@ public class UploadRequest
     /// 业务键也会自动放进去，无需重复传。
     /// </summary>
     public Dictionary<string, string?> Variables { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// 可选：指定要执行的配置 ID 列表。不传、null 或空数组表示执行该业务键下所有启用配置。
+    /// 指定时须属于 (CustCode, Device, Cp) 且已启用，否则返回 400。
+    /// </summary>
+    public List<long>? ConfigIds { get; set; }
 }

@@ -74,16 +74,42 @@ FROM {table}";
     // IConfigRepository
     // ────────────────────────────────────────────────────────────────────────
 
-    public async Task<FtpUploadConfig?> FindByKeyAsync(string custCode, string device, string cp, CancellationToken ct = default)
+    public async Task<IReadOnlyList<FtpUploadConfig>> FindAllByKeyAsync(string custCode, string device, string cp, CancellationToken ct = default)
     {
-        var sql = SelectColumns(T) + " WHERE CUST_CODE = :custCode AND DEVICE = :device AND CP = :cp AND ENABLED = 1";
+        var sql = SelectColumns(T) + " WHERE CUST_CODE = :custCode AND DEVICE = :device AND CP = :cp AND ENABLED = 1 ORDER BY ID";
         await using var conn = CreateConnection();
         await conn.OpenAsync(ct);
-        var row = await conn.QuerySingleOrDefaultAsync<ConfigRow>(
+        var rows = await conn.QueryAsync<ConfigRow>(
             new CommandDefinition(sql, new { custCode, device, cp }, cancellationToken: ct));
-        if (row is null)
+        var list = rows.Select(r => r.ToEntity()).ToList();
+        if (list.Count == 0)
             _logger.LogInformation("未找到启用的配置 custCode={CustCode} device={Device} cp={Cp}", custCode, device, cp);
-        return row?.ToEntity();
+        else
+            _logger.LogInformation("匹配到 {Count} 条启用配置 custCode={CustCode} device={Device} cp={Cp}", list.Count, custCode, device, cp);
+        return list;
+    }
+
+    public async Task<IReadOnlyList<FtpUploadConfig>> FindByIdsAndKeyAsync(
+        string custCode, string device, string cp, IEnumerable<long> configIds, CancellationToken ct = default)
+    {
+        var ids = configIds.Distinct().ToList();
+        if (ids.Count == 0)
+            return Array.Empty<FtpUploadConfig>();
+
+        var sql = SelectColumns(T) + @"
+ WHERE CUST_CODE = :custCode AND DEVICE = :device AND CP = :cp AND ENABLED = 1
+   AND ID IN :configIds
+ ORDER BY ID";
+
+        await using var conn = CreateConnection();
+        await conn.OpenAsync(ct);
+        var rows = await conn.QueryAsync<ConfigRow>(
+            new CommandDefinition(sql, new { custCode, device, cp, configIds = ids }, cancellationToken: ct));
+        var list = rows.Select(r => r.ToEntity()).ToList();
+        _logger.LogInformation(
+            "按 ID 筛选配置 custCode={CustCode} device={Device} cp={Cp} 请求={Requested} 命中={Found}",
+            custCode, device, cp, string.Join(",", ids), list.Count);
+        return list;
     }
 
     public async Task<FtpUploadConfig?> GetByIdAsync(long id, CancellationToken ct = default)
