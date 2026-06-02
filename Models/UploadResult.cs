@@ -26,6 +26,9 @@ public class UploadConfigResult
     public string? Error { get; set; }
     public string? RenderedSourcePath { get; set; }
     public string? RenderedTargetPath { get; set; }
+    public bool WaferBatchAborted { get; set; }
+    public List<string> MissingWaferNos { get; set; } = new();
+    public bool EmailAlertSent { get; set; }
     public List<UploadFileResult> Files { get; set; } = new();
 }
 
@@ -60,6 +63,8 @@ public class FileCheckConfigResult
     public string? Keyword { get; set; }
     public List<string> MatchedFiles { get; set; } = new();
     public List<WaferFileCheckResult> WaferResults { get; set; } = new();
+    public bool WaferBatchComplete { get; set; } = true;
+    public List<string> MissingWaferNos { get; set; } = new();
 }
 
 /// <summary>按单个片号 {wf_no} 查找文件的结果。</summary>

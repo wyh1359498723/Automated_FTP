@@ -64,6 +64,8 @@ API 调用者传入业务键 `(custCode, device, cp)` 与变量字典（如 `wfl
 
 `waferNos` 可选：逗号分隔片号组。查找文件时会逐个片号注入 `{wf_no}` 渲染源路径/关键词；也可在 `variables.wf_nos` 传入。
 
+**片号组完整性**：传了 `waferNos` 时，每个片号都必须至少匹配到一个文件，否则**整批取消 FTP 上传**并发送邮件报警（见 `EmailAlert` 配置）。
+
 ### `POST /api/diagnostics/file-check`
 
 只渲染源目录、按关键词列文件。

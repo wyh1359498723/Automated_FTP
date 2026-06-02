@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using Automated_FTP.Infrastructure.Email;
 using Automated_FTP.Infrastructure.Security;
 using Automated_FTP.Models;
 using Automated_FTP.Repositories;
@@ -12,6 +13,13 @@ namespace Automated_FTP.Services;
 
 public class FtpUploadService : IFtpUploadService
 {
+    private sealed record WaferFileScan(
+        string? WfNo,
+        Dictionary<string, string?> Vars,
+        string RenderedSourcePath,
+        string RenderedKeyword,
+        List<string> Files);
+
     private sealed record FileFindMatch(
         string FilePath,
         Dictionary<string, string?> Vars,
@@ -26,6 +34,7 @@ public class FtpUploadService : IFtpUploadService
     private readonly FileRenamerRegistry _renamers;
     private readonly FileTransferClientFactory _transferFactory;
     private readonly PasswordProtector _passwordProtector;
+    private readonly IAlertEmailService _alertEmail;
     private readonly UploadOptions _options;
     private readonly ILogger<FtpUploadService> _logger;
 
@@ -37,6 +46,7 @@ public class FtpUploadService : IFtpUploadService
         FileRenamerRegistry renamers,
         FileTransferClientFactory transferFactory,
         PasswordProtector passwordProtector,
+        IAlertEmailService alertEmail,
         IOptions<UploadOptions> options,
         ILogger<FtpUploadService> logger)
     {
@@ -47,6 +57,7 @@ public class FtpUploadService : IFtpUploadService
         _renamers = renamers;
         _transferFactory = transferFactory;
         _passwordProtector = passwordProtector;
+        _alertEmail = alertEmail;
         _options = options.Value;
         _logger = logger;
     }
@@ -71,7 +82,7 @@ public class FtpUploadService : IFtpUploadService
                 ConfigId = config.Id,
                 Remark = config.Remark,
             };
-            var ok = await UploadOneConfigAsync(config, vars, waferNos, cfgResult, ct);
+            var ok = await UploadOneConfigAsync(request, config, vars, waferNos, cfgResult, ct);
             result.Configs.Add(cfgResult);
             result.Files.AddRange(cfgResult.Files);
             if (!ok) allOk = false;
@@ -107,9 +118,29 @@ public class FtpUploadService : IFtpUploadService
 
             try
             {
-                var matches = FindFilesWithWaferNos(config, vars, waferNos);
-                ApplyFileCheckSummary(cfgResult, matches, waferNos);
-                cfgResult.Success = true;
+                var scans = ScanFilesByWafer(config, vars, waferNos);
+                ApplyFileCheckSummary(cfgResult, scans, waferNos);
+                if (waferNos.Count > 0)
+                {
+                    var missing = GetMissingWaferNos(waferNos, scans);
+                    cfgResult.MissingWaferNos = missing.ToList();
+                    cfgResult.WaferBatchComplete = missing.Count == 0;
+                    if (missing.Count > 0)
+                    {
+                        cfgResult.Success = false;
+                        cfgResult.Error =
+                            $"片号组完整性检查失败：片号 [{string.Join(", ", missing)}] 未找到文件。";
+                        allOk = false;
+                    }
+                    else
+                    {
+                        cfgResult.Success = true;
+                    }
+                }
+                else
+                {
+                    cfgResult.Success = true;
+                }
             }
             catch (Exception ex)
             {
@@ -190,16 +221,17 @@ public class FtpUploadService : IFtpUploadService
     }
 
     private async Task<bool> UploadOneConfigAsync(
+        UploadRequest request,
         FtpUploadConfig config,
         Dictionary<string, string?> vars,
         IReadOnlyList<string> waferNos,
         UploadConfigResult cfgResult,
         CancellationToken ct)
     {
-        List<FileFindMatch> matches;
+        List<WaferFileScan> scans;
         try
         {
-            matches = FindFilesWithWaferNos(config, vars, waferNos);
+            scans = ScanFilesByWafer(config, vars, waferNos);
         }
         catch (Exception ex)
         {
@@ -208,6 +240,23 @@ public class FtpUploadService : IFtpUploadService
             return false;
         }
 
+        if (waferNos.Count > 0)
+        {
+            var missing = GetMissingWaferNos(waferNos, scans);
+            if (missing.Count > 0)
+            {
+                cfgResult.Success = false;
+                cfgResult.WaferBatchAborted = true;
+                cfgResult.MissingWaferNos = missing.ToList();
+                cfgResult.Error =
+                    $"片号组完整性检查失败：片号 [{string.Join(", ", missing)}] 未找到文件，本批次已全部取消 FTP 上传。";
+
+                await SendWaferBatchAlertAsync(request, config, waferNos, missing, scans, cfgResult, ct);
+                return false;
+            }
+        }
+
+        var matches = FlattenScansToMatches(scans);
         cfgResult.RenderedSourcePath = SummarizeRenderedPaths(matches, m => m.RenderedSourcePath);
         cfgResult.RenderedTargetPath = _renderer.Render(
             config.FtpTargetPath,
@@ -216,11 +265,11 @@ public class FtpUploadService : IFtpUploadService
 
         if (matches.Count == 0)
         {
-            cfgResult.Success = true;
+            cfgResult.Success = waferNos.Count == 0;
             cfgResult.Error = waferNos.Count > 0
                 ? $"源目录中未匹配到文件（片号组：{string.Join(",", waferNos)}）。"
                 : "源目录中没有匹配到文件。";
-            return true;
+            return cfgResult.Success;
         }
 
         var processor = _processors.Resolve(config.ProcessorName);
@@ -424,35 +473,20 @@ public class FtpUploadService : IFtpUploadService
         return (configs, vars, waferNos);
     }
 
-    private List<FileFindMatch> FindFilesWithWaferNos(
+    private List<WaferFileScan> ScanFilesByWafer(
         FtpUploadConfig config,
         Dictionary<string, string?> baseVars,
         IReadOnlyList<string> waferNos)
     {
-        var results = new List<FileFindMatch>();
-        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-
-        void AddMatches(Dictionary<string, string?> vars, string? wfNo)
-        {
-            var sourceDir = _renderer.Render(config.SourcePath, vars, keepUnmatched: false);
-            var keyword = _renderer.Render(config.SourceKeyword, vars, keepUnmatched: false);
-            foreach (var file in _finder.Find(sourceDir, keyword))
-            {
-                if (!seen.Add(file))
-                    continue;
-                results.Add(new FileFindMatch(
-                    file,
-                    new Dictionary<string, string?>(vars, StringComparer.OrdinalIgnoreCase),
-                    wfNo,
-                    sourceDir,
-                    keyword));
-            }
-        }
+        var scans = new List<WaferFileScan>();
 
         if (waferNos.Count == 0)
         {
-            AddMatches(new Dictionary<string, string?>(baseVars, StringComparer.OrdinalIgnoreCase), null);
-            return results;
+            var vars = new Dictionary<string, string?>(baseVars, StringComparer.OrdinalIgnoreCase);
+            var sourceDir = _renderer.Render(config.SourcePath, vars, keepUnmatched: false);
+            var keyword = _renderer.Render(config.SourceKeyword, vars, keepUnmatched: false);
+            scans.Add(new WaferFileScan(null, vars, sourceDir, keyword, _finder.Find(sourceDir, keyword).ToList()));
+            return scans;
         }
 
         foreach (var wfNo in waferNos)
@@ -461,17 +495,77 @@ public class FtpUploadService : IFtpUploadService
             {
                 [WaferNoResolver.WfNoKey] = wfNo,
             };
-            AddMatches(vars, wfNo);
+            var sourceDir = _renderer.Render(config.SourcePath, vars, keepUnmatched: false);
+            var keyword = _renderer.Render(config.SourceKeyword, vars, keepUnmatched: false);
+            scans.Add(new WaferFileScan(wfNo, vars, sourceDir, keyword, _finder.Find(sourceDir, keyword).ToList()));
         }
 
+        return scans;
+    }
+
+    private static List<FileFindMatch> FlattenScansToMatches(IReadOnlyList<WaferFileScan> scans)
+    {
+        var results = new List<FileFindMatch>();
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var scan in scans)
+        {
+            foreach (var file in scan.Files)
+            {
+                if (!seen.Add(file))
+                    continue;
+                results.Add(new FileFindMatch(file, scan.Vars, scan.WfNo, scan.RenderedSourcePath, scan.RenderedKeyword));
+            }
+        }
         return results;
+    }
+
+    private static IReadOnlyList<string> GetMissingWaferNos(
+        IReadOnlyList<string> waferNos,
+        IReadOnlyList<WaferFileScan> scans) =>
+        WaferBatchValidator.GetMissingWaferNosFromMatches(
+            waferNos,
+            scans.Select(s => (s.WfNo, s.Files.Count)));
+
+    private async Task SendWaferBatchAlertAsync(
+        UploadRequest request,
+        FtpUploadConfig config,
+        IReadOnlyList<string> waferNos,
+        IReadOnlyList<string> missing,
+        IReadOnlyList<WaferFileScan> scans,
+        UploadConfigResult cfgResult,
+        CancellationToken ct)
+    {
+        var context = new WaferBatchAlertContext
+        {
+            CustCode = request.CustCode,
+            Device = request.Device,
+            Cp = request.Cp,
+            ConfigId = config.Id,
+            ConfigRemark = config.Remark,
+            WaferNos = WaferNoResolver.GetRawWaferNos(request) ?? string.Join(",", waferNos),
+            MissingWaferNos = missing,
+            WaferDetails = scans
+                .Where(s => s.WfNo is not null)
+                .Select(s => new WaferScanDetail
+                {
+                    WfNo = s.WfNo!,
+                    RenderedSourcePath = s.RenderedSourcePath,
+                    Keyword = s.RenderedKeyword,
+                    MatchedFileCount = s.Files.Count,
+                })
+                .ToList(),
+        };
+
+        await _alertEmail.SendWaferBatchMissingFilesAlertAsync(context, ct);
+        cfgResult.EmailAlertSent = true;
     }
 
     private static void ApplyFileCheckSummary(
         FileCheckConfigResult cfgResult,
-        IReadOnlyList<FileFindMatch> matches,
+        IReadOnlyList<WaferFileScan> scans,
         IReadOnlyList<string> waferNos)
     {
+        var matches = FlattenScansToMatches(scans);
         cfgResult.MatchedFiles = matches.Select(m => m.FilePath).ToList();
         cfgResult.RenderedSourcePath = SummarizeRenderedPaths(matches, m => m.RenderedSourcePath);
         cfgResult.Keyword = SummarizeRenderedPaths(matches, m => m.RenderedKeyword);
@@ -479,24 +573,32 @@ public class FtpUploadService : IFtpUploadService
         if (waferNos.Count == 0)
             return;
 
-        var grouped = matches.GroupBy(m => m.WfNo ?? string.Empty, StringComparer.OrdinalIgnoreCase);
-        foreach (var group in grouped)
+        foreach (var scan in scans.Where(s => s.WfNo is not null))
         {
-            var first = group.First();
             cfgResult.WaferResults.Add(new WaferFileCheckResult
             {
-                WfNo = string.IsNullOrEmpty(group.Key) ? null : group.Key,
-                RenderedSourcePath = first.RenderedSourcePath,
-                Keyword = first.RenderedKeyword,
-                MatchedFiles = group.Select(m => m.FilePath).ToList(),
+                WfNo = scan.WfNo,
+                RenderedSourcePath = scan.RenderedSourcePath,
+                Keyword = scan.RenderedKeyword,
+                MatchedFiles = scan.Files.ToList(),
             });
         }
 
-        foreach (var wfNo in waferNos)
+        var missing = GetMissingWaferNos(waferNos, scans);
+        cfgResult.MissingWaferNos = missing.ToList();
+        cfgResult.WaferBatchComplete = missing.Count == 0;
+
+        foreach (var wfNo in missing)
         {
             if (cfgResult.WaferResults.Any(r => string.Equals(r.WfNo, wfNo, StringComparison.OrdinalIgnoreCase)))
                 continue;
-            cfgResult.WaferResults.Add(new WaferFileCheckResult { WfNo = wfNo });
+            var scan = scans.FirstOrDefault(s => string.Equals(s.WfNo, wfNo, StringComparison.OrdinalIgnoreCase));
+            cfgResult.WaferResults.Add(new WaferFileCheckResult
+            {
+                WfNo = wfNo,
+                RenderedSourcePath = scan?.RenderedSourcePath,
+                Keyword = scan?.RenderedKeyword,
+            });
         }
     }
 

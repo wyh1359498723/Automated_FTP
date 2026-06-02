@@ -1,3 +1,4 @@
+using Automated_FTP.Infrastructure.Email;
 using Automated_FTP.Infrastructure.Security;
 using Automated_FTP.Repositories;
 using Automated_FTP.Services;
@@ -26,6 +27,8 @@ builder.Services.AddSwaggerGen(c =>
 // 配置选项
 builder.Services.Configure<OracleOptions>(builder.Configuration.GetSection("Oracle"));
 builder.Services.Configure<UploadOptions>(builder.Configuration.GetSection("Upload"));
+builder.Services.Configure<Automated_FTP.Infrastructure.Email.EmailAlertOptions>(
+    builder.Configuration.GetSection("EmailAlert"));
 
 // DataProtection（FTP 密码加解密）
 var dpKeysPath = builder.Configuration.GetValue<string>("DataProtection:KeysPath") ?? "App_Data/DataProtection-Keys";
@@ -58,6 +61,8 @@ builder.Services.AddSingleton<FileProcessorRegistry>();
 builder.Services.AddSingleton<IFileRenamer, TemplateRenamer>();
 builder.Services.AddSingleton<IFileRenamer, KeepOriginalRenamer>();
 builder.Services.AddSingleton<FileRenamerRegistry>();
+
+builder.Services.AddSingleton<IAlertEmailService, SmtpAlertEmailService>();
 
 // 主编排
 builder.Services.AddScoped<IFtpUploadService, FtpUploadService>();
