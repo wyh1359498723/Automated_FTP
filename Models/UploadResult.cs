@@ -6,6 +6,7 @@ namespace Automated_FTP.Models;
 public class UploadFileResult
 {
     public string SourceFile { get; set; } = string.Empty;
+    public string? WfNo { get; set; }
     public string ProcessedFile { get; set; } = string.Empty;
     public string TargetPath { get; set; } = string.Empty;
     public string TargetFileName { get; set; } = string.Empty;
@@ -55,6 +56,16 @@ public class FileCheckConfigResult
     public string? Remark { get; set; }
     public bool Success { get; set; }
     public string? Error { get; set; }
+    public string? RenderedSourcePath { get; set; }
+    public string? Keyword { get; set; }
+    public List<string> MatchedFiles { get; set; } = new();
+    public List<WaferFileCheckResult> WaferResults { get; set; } = new();
+}
+
+/// <summary>按单个片号 {wf_no} 查找文件的结果。</summary>
+public class WaferFileCheckResult
+{
+    public string? WfNo { get; set; }
     public string? RenderedSourcePath { get; set; }
     public string? Keyword { get; set; }
     public List<string> MatchedFiles { get; set; } = new();

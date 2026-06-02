@@ -29,4 +29,10 @@ public class UploadRequest
     /// 指定时须属于 (CustCode, Device, Cp) 且已启用，否则返回 400。
     /// </summary>
     public List<long>? ConfigIds { get; set; }
+
+    /// <summary>
+    /// 片号组，逗号分隔，如 "1,2,3,4"。查找文件时会逐个片号注入 {wf_no} 参与源路径/关键词匹配。
+    /// 也可在 variables.wf_nos 中传入（本字段优先）。
+    /// </summary>
+    public string? WaferNos { get; set; }
 }

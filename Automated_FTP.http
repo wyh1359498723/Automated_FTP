@@ -10,7 +10,8 @@ Content-Type: application/json
   "cp": "CP1",
   "variables": {
     "wflot": "WL202605270001"
-  }
+  },
+  "waferNos": "1,2,3,4"
 }
 
 ### 主上传流程（指定 configIds）

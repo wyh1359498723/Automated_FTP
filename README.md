@@ -55,11 +55,14 @@ API 调用者传入业务键 `(custCode, device, cp)` 与变量字典（如 `wfl
   "device": "DEV01",
   "cp": "CP1",
   "variables": { "wflot": "WL202605270001" },
-  "configIds": [3, 7]
+  "configIds": [3, 7],
+  "waferNos": "1,2,3,4"
 }
 ```
 
 `configIds` 可选：不传或空数组 = 执行该业务键下全部启用配置；传 ID 数组 = 只执行指定配置（须属于该业务键且已启用）。
+
+`waferNos` 可选：逗号分隔片号组。查找文件时会逐个片号注入 `{wf_no}` 渲染源路径/关键词；也可在 `variables.wf_nos` 传入。
 
 ### `POST /api/diagnostics/file-check`
 

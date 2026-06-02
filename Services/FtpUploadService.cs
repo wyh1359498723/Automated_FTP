@@ -12,6 +12,13 @@ namespace Automated_FTP.Services;
 
 public class FtpUploadService : IFtpUploadService
 {
+    private sealed record FileFindMatch(
+        string FilePath,
+        Dictionary<string, string?> Vars,
+        string? WfNo,
+        string RenderedSourcePath,
+        string RenderedKeyword);
+
     private readonly IConfigRepository _repo;
     private readonly PathTemplateRenderer _renderer;
     private readonly FileFinder _finder;
@@ -46,7 +53,7 @@ public class FtpUploadService : IFtpUploadService
 
     public async Task<UploadResult> UploadAsync(UploadRequest request, CancellationToken ct = default)
     {
-        var (configs, vars) = await ResolveConfigsAndVarsAsync(request, ct);
+        var (configs, vars, waferNos) = await ResolveConfigsAndVarsAsync(request, ct);
         var result = new UploadResult { ConfigCount = configs.Count };
 
         if (configs.Count == 0)
@@ -64,7 +71,7 @@ public class FtpUploadService : IFtpUploadService
                 ConfigId = config.Id,
                 Remark = config.Remark,
             };
-            var ok = await UploadOneConfigAsync(config, vars, cfgResult, ct);
+            var ok = await UploadOneConfigAsync(config, vars, waferNos, cfgResult, ct);
             result.Configs.Add(cfgResult);
             result.Files.AddRange(cfgResult.Files);
             if (!ok) allOk = false;
@@ -79,7 +86,7 @@ public class FtpUploadService : IFtpUploadService
 
     public async Task<FileCheckResult> CheckFilesAsync(UploadRequest request, CancellationToken ct = default)
     {
-        var (configs, vars) = await ResolveConfigsAndVarsAsync(request, ct);
+        var (configs, vars, waferNos) = await ResolveConfigsAndVarsAsync(request, ct);
         var result = new FileCheckResult { ConfigCount = configs.Count };
 
         if (configs.Count == 0)
@@ -98,14 +105,10 @@ public class FtpUploadService : IFtpUploadService
                 Remark = config.Remark,
             };
 
-            var sourceDir = _renderer.Render(config.SourcePath, vars, keepUnmatched: false);
-            var keyword = _renderer.Render(config.SourceKeyword, vars, keepUnmatched: false);
-            cfgResult.RenderedSourcePath = sourceDir;
-            cfgResult.Keyword = keyword;
-
             try
             {
-                cfgResult.MatchedFiles = _finder.Find(sourceDir, keyword).ToList();
+                var matches = FindFilesWithWaferNos(config, vars, waferNos);
+                ApplyFileCheckSummary(cfgResult, matches, waferNos);
                 cfgResult.Success = true;
             }
             catch (Exception ex)
@@ -128,7 +131,7 @@ public class FtpUploadService : IFtpUploadService
 
     public async Task<FtpCheckResult> CheckFtpAsync(UploadRequest request, CancellationToken ct = default)
     {
-        var (configs, vars) = await ResolveConfigsAndVarsAsync(request, ct);
+        var (configs, vars, waferNos) = await ResolveConfigsAndVarsAsync(request, ct);
         var result = new FtpCheckResult { ConfigCount = configs.Count };
 
         if (configs.Count == 0)
@@ -147,7 +150,8 @@ public class FtpUploadService : IFtpUploadService
                 Remark = config.Remark,
             };
 
-            var targetDir = _renderer.Render(config.FtpTargetPath, vars, keepUnmatched: false);
+            var ftpVars = BuildFtpCheckVars(vars, waferNos);
+            var targetDir = _renderer.Render(config.FtpTargetPath, ftpVars, keepUnmatched: false);
             cfgResult.Protocol = config.FtpProtocol;
             cfgResult.Host = config.FtpHost;
             cfgResult.Port = config.FtpPort;
@@ -188,17 +192,15 @@ public class FtpUploadService : IFtpUploadService
     private async Task<bool> UploadOneConfigAsync(
         FtpUploadConfig config,
         Dictionary<string, string?> vars,
+        IReadOnlyList<string> waferNos,
         UploadConfigResult cfgResult,
         CancellationToken ct)
     {
-        var sourceDir = _renderer.Render(config.SourcePath, vars, keepUnmatched: false);
-        var keyword = _renderer.Render(config.SourceKeyword, vars, keepUnmatched: false);
-        var targetDir = _renderer.Render(config.FtpTargetPath, vars, keepUnmatched: false);
-        cfgResult.RenderedSourcePath = sourceDir;
-        cfgResult.RenderedTargetPath = targetDir;
-
-        IReadOnlyList<string> files;
-        try { files = _finder.Find(sourceDir, keyword); }
+        List<FileFindMatch> matches;
+        try
+        {
+            matches = FindFilesWithWaferNos(config, vars, waferNos);
+        }
         catch (Exception ex)
         {
             cfgResult.Success = false;
@@ -206,10 +208,18 @@ public class FtpUploadService : IFtpUploadService
             return false;
         }
 
-        if (files.Count == 0)
+        cfgResult.RenderedSourcePath = SummarizeRenderedPaths(matches, m => m.RenderedSourcePath);
+        cfgResult.RenderedTargetPath = _renderer.Render(
+            config.FtpTargetPath,
+            BuildFtpCheckVars(vars, waferNos),
+            keepUnmatched: false);
+
+        if (matches.Count == 0)
         {
             cfgResult.Success = true;
-            cfgResult.Error = "源目录中没有匹配到文件。";
+            cfgResult.Error = waferNos.Count > 0
+                ? $"源目录中未匹配到文件（片号组：{string.Join(",", waferNos)}）。"
+                : "源目录中没有匹配到文件。";
             return true;
         }
 
@@ -229,7 +239,11 @@ public class FtpUploadService : IFtpUploadService
         try
         {
             await client.ConnectAsync(config.FtpHost, config.FtpPort, config.FtpUser, plainPwd, _options.DefaultFtpTimeoutSeconds, ct);
-            await client.EnsureDirectoryAsync(targetDir, ct);
+            var targetDirs = matches
+                .Select(m => _renderer.Render(config.FtpTargetPath, m.Vars, keepUnmatched: false))
+                .Distinct(StringComparer.OrdinalIgnoreCase);
+            foreach (var dir in targetDirs)
+                await client.EnsureDirectoryAsync(dir, ct);
         }
         catch (Exception ex)
         {
@@ -242,12 +256,12 @@ public class FtpUploadService : IFtpUploadService
         if (processor is IBatchFileProcessor batchProcessor)
         {
             allOk = await UploadBatchAsync(
-                batchProcessor, files, config, renamer, vars, targetDir, client, cfgResult, ct);
+                batchProcessor, matches, config, renamer, client, cfgResult, ct);
         }
         else
         {
             allOk = await UploadPerFileAsync(
-                processor, files, config, renamer, vars, targetDir, client, cfgResult, ct);
+                processor, matches, config, renamer, client, cfgResult, ct);
         }
 
         cfgResult.Success = allOk;
@@ -259,19 +273,19 @@ public class FtpUploadService : IFtpUploadService
     /// <summary>逐文件处理并上传（PassThrough / ZipCompress 等单文件处理器）。</summary>
     private async Task<bool> UploadPerFileAsync(
         IFileProcessor processor,
-        IReadOnlyList<string> files,
+        IReadOnlyList<FileFindMatch> matches,
         FtpUploadConfig config,
         IFileRenamer renamer,
-        Dictionary<string, string?> vars,
-        string targetDir,
         IFileTransferClient client,
         UploadConfigResult cfgResult,
         CancellationToken ct)
     {
         var allOk = true;
-        foreach (var src in files)
+        foreach (var match in matches)
         {
-            var perFile = new UploadFileResult { SourceFile = src };
+            var src = match.FilePath;
+            var vars = match.Vars;
+            var perFile = new UploadFileResult { SourceFile = src, WfNo = match.WfNo };
             var sw = Stopwatch.StartNew();
             ProcessResult? processed = null;
             try
@@ -284,6 +298,7 @@ public class FtpUploadService : IFtpUploadService
                     ["processedExt"] = Path.GetExtension(processed.ProcessedFile),
                 };
                 var targetName = renamer.Rename(src, config.RenamerParam, renameVars);
+                var targetDir = _renderer.Render(config.FtpTargetPath, vars, keepUnmatched: false);
                 perFile.TargetFileName = targetName;
                 perFile.TargetPath = JoinRemote(targetDir, targetName);
 
@@ -295,7 +310,7 @@ public class FtpUploadService : IFtpUploadService
                 allOk = false;
                 perFile.Success = false;
                 perFile.Error = ex.Message;
-                _logger.LogError(ex, "配置 ID={ConfigId} 上传文件失败 {File}", config.Id, src);
+                _logger.LogError(ex, "配置 ID={ConfigId} 上传文件失败 {File} wf_no={WfNo}", config.Id, src, match.WfNo);
             }
             finally
             {
@@ -314,32 +329,34 @@ public class FtpUploadService : IFtpUploadService
     /// </summary>
     private async Task<bool> UploadBatchAsync(
         IBatchFileProcessor processor,
-        IReadOnlyList<string> files,
+        IReadOnlyList<FileFindMatch> matches,
         FtpUploadConfig config,
         IFileRenamer renamer,
-        Dictionary<string, string?> vars,
-        string targetDir,
         IFileTransferClient client,
         UploadConfigResult cfgResult,
         CancellationToken ct)
     {
+        var files = matches.Select(m => m.FilePath).ToList();
+        var batchVars = BuildBatchVars(matches);
         var perFile = new UploadFileResult
         {
             SourceFile = string.Join("\n", files),
+            WfNo = matches.Count == 1 ? matches[0].WfNo : null,
         };
         var sw = Stopwatch.StartNew();
         ProcessResult? processed = null;
         try
         {
-            processed = await processor.ProcessBatchAsync(files, config.ProcessorParam, vars, ct);
+            processed = await processor.ProcessBatchAsync(files, config.ProcessorParam, batchVars, ct);
             perFile.ProcessedFile = processed.ProcessedFile;
 
-            var renameVars = new Dictionary<string, string?>(vars, StringComparer.OrdinalIgnoreCase)
+            var renameVars = new Dictionary<string, string?>(batchVars, StringComparer.OrdinalIgnoreCase)
             {
                 ["processedExt"] = Path.GetExtension(processed.ProcessedFile),
                 ["fileCount"] = files.Count.ToString(),
             };
             var targetName = renamer.Rename(files[0], config.RenamerParam, renameVars);
+            var targetDir = _renderer.Render(config.FtpTargetPath, batchVars, keepUnmatched: false);
             perFile.TargetFileName = targetName;
             perFile.TargetPath = JoinRemote(targetDir, targetName);
 
@@ -371,7 +388,7 @@ public class FtpUploadService : IFtpUploadService
         }
     }
 
-    private async Task<(IReadOnlyList<FtpUploadConfig> configs, Dictionary<string, string?> vars)> ResolveConfigsAndVarsAsync(
+    private async Task<(IReadOnlyList<FtpUploadConfig> configs, Dictionary<string, string?> vars, IReadOnlyList<string> waferNos)> ResolveConfigsAndVarsAsync(
         UploadRequest request, CancellationToken ct)
     {
         var vars = new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase)
@@ -386,6 +403,11 @@ public class FtpUploadService : IFtpUploadService
                 vars[kv.Key] = kv.Value;
         }
 
+        var waferNos = WaferNoResolver.ResolveList(request);
+        var waferNosRaw = WaferNoResolver.GetRawWaferNos(request);
+        if (!string.IsNullOrWhiteSpace(waferNosRaw))
+            vars[WaferNoResolver.WfNosKey] = waferNosRaw;
+
         IReadOnlyList<FtpUploadConfig> configs;
         if (request.ConfigIds is null || request.ConfigIds.Count == 0)
         {
@@ -399,7 +421,121 @@ public class FtpUploadService : IFtpUploadService
             await ValidateRequestedConfigIdsAsync(request, requestedIds, configs, ct);
         }
 
-        return (configs, vars);
+        return (configs, vars, waferNos);
+    }
+
+    private List<FileFindMatch> FindFilesWithWaferNos(
+        FtpUploadConfig config,
+        Dictionary<string, string?> baseVars,
+        IReadOnlyList<string> waferNos)
+    {
+        var results = new List<FileFindMatch>();
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        void AddMatches(Dictionary<string, string?> vars, string? wfNo)
+        {
+            var sourceDir = _renderer.Render(config.SourcePath, vars, keepUnmatched: false);
+            var keyword = _renderer.Render(config.SourceKeyword, vars, keepUnmatched: false);
+            foreach (var file in _finder.Find(sourceDir, keyword))
+            {
+                if (!seen.Add(file))
+                    continue;
+                results.Add(new FileFindMatch(
+                    file,
+                    new Dictionary<string, string?>(vars, StringComparer.OrdinalIgnoreCase),
+                    wfNo,
+                    sourceDir,
+                    keyword));
+            }
+        }
+
+        if (waferNos.Count == 0)
+        {
+            AddMatches(new Dictionary<string, string?>(baseVars, StringComparer.OrdinalIgnoreCase), null);
+            return results;
+        }
+
+        foreach (var wfNo in waferNos)
+        {
+            var vars = new Dictionary<string, string?>(baseVars, StringComparer.OrdinalIgnoreCase)
+            {
+                [WaferNoResolver.WfNoKey] = wfNo,
+            };
+            AddMatches(vars, wfNo);
+        }
+
+        return results;
+    }
+
+    private static void ApplyFileCheckSummary(
+        FileCheckConfigResult cfgResult,
+        IReadOnlyList<FileFindMatch> matches,
+        IReadOnlyList<string> waferNos)
+    {
+        cfgResult.MatchedFiles = matches.Select(m => m.FilePath).ToList();
+        cfgResult.RenderedSourcePath = SummarizeRenderedPaths(matches, m => m.RenderedSourcePath);
+        cfgResult.Keyword = SummarizeRenderedPaths(matches, m => m.RenderedKeyword);
+
+        if (waferNos.Count == 0)
+            return;
+
+        var grouped = matches.GroupBy(m => m.WfNo ?? string.Empty, StringComparer.OrdinalIgnoreCase);
+        foreach (var group in grouped)
+        {
+            var first = group.First();
+            cfgResult.WaferResults.Add(new WaferFileCheckResult
+            {
+                WfNo = string.IsNullOrEmpty(group.Key) ? null : group.Key,
+                RenderedSourcePath = first.RenderedSourcePath,
+                Keyword = first.RenderedKeyword,
+                MatchedFiles = group.Select(m => m.FilePath).ToList(),
+            });
+        }
+
+        foreach (var wfNo in waferNos)
+        {
+            if (cfgResult.WaferResults.Any(r => string.Equals(r.WfNo, wfNo, StringComparison.OrdinalIgnoreCase)))
+                continue;
+            cfgResult.WaferResults.Add(new WaferFileCheckResult { WfNo = wfNo });
+        }
+    }
+
+    private static Dictionary<string, string?> BuildFtpCheckVars(
+        Dictionary<string, string?> baseVars,
+        IReadOnlyList<string> waferNos)
+    {
+        if (waferNos.Count == 0)
+            return new Dictionary<string, string?>(baseVars, StringComparer.OrdinalIgnoreCase);
+
+        var vars = new Dictionary<string, string?>(baseVars, StringComparer.OrdinalIgnoreCase)
+        {
+            [WaferNoResolver.WfNoKey] = waferNos[0],
+        };
+        return vars;
+    }
+
+    private static Dictionary<string, string?> BuildBatchVars(IReadOnlyList<FileFindMatch> matches)
+    {
+        var baseVars = matches.Count > 0
+            ? new Dictionary<string, string?>(matches[0].Vars, StringComparer.OrdinalIgnoreCase)
+            : new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase);
+        var wfNos = matches
+            .Select(m => m.WfNo)
+            .Where(w => !string.IsNullOrWhiteSpace(w))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        if (wfNos.Count == 1)
+            baseVars[WaferNoResolver.WfNoKey] = wfNos[0];
+        return baseVars;
+    }
+
+    private static string SummarizeRenderedPaths<T>(
+        IReadOnlyList<T> matches,
+        Func<T, string> selector)
+    {
+        if (matches.Count == 0)
+            return string.Empty;
+        return string.Join(" | ", matches.Select(selector).Distinct(StringComparer.OrdinalIgnoreCase));
     }
 
     private async Task ValidateRequestedConfigIdsAsync(
