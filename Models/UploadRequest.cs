@@ -19,7 +19,7 @@ public class UploadRequest
     public string Cp { get; set; } = string.Empty;
 
     /// <summary>
-    /// 占位符变量字典，例如 { "wflot": "WL202605270001" }。
+    /// 占位符变量字典，例如 { "wflot": "WL001", "ENGorMP": "MP", "wf_id": "1", "testFlag": "Y", "testTime": "20260527" }。
     /// 业务键也会自动放进去，无需重复传。
     /// </summary>
     public Dictionary<string, string?> Variables { get; set; } = new(StringComparer.OrdinalIgnoreCase);

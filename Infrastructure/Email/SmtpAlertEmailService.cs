@@ -55,6 +55,8 @@ public class SmtpAlertEmailService : IAlertEmailService
         };
         if (!string.IsNullOrWhiteSpace(_options.UserName))
             client.Credentials = new NetworkCredential(_options.UserName, _options.Password ?? string.Empty);
+        else if (!string.IsNullOrWhiteSpace(_options.Password))
+            client.Credentials = new NetworkCredential(_options.From, _options.Password);
 
         try
         {

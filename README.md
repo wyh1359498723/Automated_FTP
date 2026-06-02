@@ -54,7 +54,14 @@ API 调用者传入业务键 `(custCode, device, cp)` 与变量字典（如 `wfl
   "custCode": "C001",
   "device": "DEV01",
   "cp": "CP1",
-  "variables": { "wflot": "WL202605270001" },
+  "variables": {
+    "wflot": "WL202605270001",
+    "lotid": "LOT001",
+    "ENGorMP": "MP",
+    "wf_id": "1",
+    "testFlag": "Y",
+    "testTime": "20260527143000"
+  },
   "configIds": [3, 7],
   "waferNos": "1,2,3,4"
 }
