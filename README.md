@@ -75,7 +75,7 @@ API 调用者传入业务键 `(custCode, device, cp)` 与变量字典（如 `wfl
 
 ### `POST /api/diagnostics/file-check`
 
-只渲染源目录、按关键词列文件。
+只渲染源目录、按关键词列文件。未传 `waferNos` 时：渲染后的源目录必须存在且至少匹配 1 个文件，否则 `success=false`（目录不存在时不会抛异常，只返回空列表）。传了 `waferNos` 时按片号组完整性校验。
 
 ### `POST /api/diagnostics/ftp-check`
 

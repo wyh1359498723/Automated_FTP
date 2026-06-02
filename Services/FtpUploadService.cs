@@ -137,6 +137,12 @@ public class FtpUploadService : IFtpUploadService
                         cfgResult.Success = true;
                     }
                 }
+                else if (!TryValidateFileScans(scans, out var scanError))
+                {
+                    cfgResult.Success = false;
+                    cfgResult.Error = scanError;
+                    allOk = false;
+                }
                 else
                 {
                     cfgResult.Success = true;
@@ -255,6 +261,13 @@ public class FtpUploadService : IFtpUploadService
                 return false;
             }
         }
+        else if (!TryValidateFileScans(scans, out var scanError))
+        {
+            cfgResult.Success = false;
+            cfgResult.Error = scanError;
+            cfgResult.RenderedSourcePath = scans.FirstOrDefault()?.RenderedSourcePath;
+            return false;
+        }
 
         var matches = FlattenScansToMatches(scans);
         cfgResult.RenderedSourcePath = SummarizeRenderedPaths(matches, m => m.RenderedSourcePath);
@@ -265,11 +278,11 @@ public class FtpUploadService : IFtpUploadService
 
         if (matches.Count == 0)
         {
-            cfgResult.Success = waferNos.Count == 0;
+            cfgResult.Success = false;
             cfgResult.Error = waferNos.Count > 0
                 ? $"源目录中未匹配到文件（片号组：{string.Join(",", waferNos)}）。"
                 : "源目录中没有匹配到文件。";
-            return cfgResult.Success;
+            return false;
         }
 
         var processor = _processors.Resolve(config.ProcessorName);
@@ -525,6 +538,43 @@ public class FtpUploadService : IFtpUploadService
         WaferBatchValidator.GetMissingWaferNosFromMatches(
             waferNos,
             scans.Select(s => (s.WfNo, s.Files.Count)));
+
+    /// <summary>
+    /// 未传片号组时：源目录必须存在且至少匹配到一个文件。
+    /// </summary>
+    private static bool TryValidateFileScans(IReadOnlyList<WaferFileScan> scans, out string? error)
+    {
+        error = null;
+        if (scans.Count == 0)
+        {
+            error = "未执行文件扫描。";
+            return false;
+        }
+
+        foreach (var scan in scans)
+        {
+            var dir = scan.RenderedSourcePath;
+            if (string.IsNullOrWhiteSpace(dir))
+            {
+                error = "渲染后的源目录为空，请检查 SOURCE_PATH 模板与 variables 占位符。";
+                return false;
+            }
+
+            if (!Directory.Exists(dir))
+            {
+                error = $"源目录不存在：{dir}";
+                return false;
+            }
+
+            if (scan.Files.Count == 0)
+            {
+                error = $"源目录中未匹配到文件：{dir}，关键词：{scan.RenderedKeyword}";
+                return false;
+            }
+        }
+
+        return true;
+    }
 
     private async Task SendWaferBatchAlertAsync(
         UploadRequest request,
