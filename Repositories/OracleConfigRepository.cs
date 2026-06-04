@@ -185,10 +185,9 @@ INSERT INTO {T} (
 
     public async Task<bool> UpdateAsync(FtpUploadConfig config, CancellationToken ct = default)
     {
-        // 密码若为空字符串表示"不改密码"，用子查询保留原值
-        var pwdClause = string.IsNullOrEmpty(config.FtpPassword)
-            ? "FTP_PASSWORD = (SELECT FTP_PASSWORD FROM " + T + " WHERE ID = :id)"
-            : "FTP_PASSWORD = :ftpPassword";
+        // 密码为空表示不改：不写 FTP_PASSWORD 列，避免子查询重复绑定 :id 引发 ORA-01722
+        var updatePassword = !string.IsNullOrEmpty(config.FtpPassword);
+        var pwdClause = updatePassword ? "FTP_PASSWORD = :ftpPassword," : "";
 
         var sql = $@"
 UPDATE {T} SET
@@ -205,7 +204,7 @@ UPDATE {T} SET
     FTP_HOST        = :ftpHost,
     FTP_PORT        = :ftpPort,
     FTP_USER        = :ftpUser,
-    {pwdClause},
+    {pwdClause}
     FTP_TARGET_PATH = :ftpTargetPath,
     ENABLED         = :enabled,
     REMARK          = :remark,
@@ -230,12 +229,12 @@ WHERE ID = :id";
         cmd.Parameters.Add("ftpHost",       OracleDbType.Varchar2).Value = config.FtpHost;
         cmd.Parameters.Add("ftpPort",       OracleDbType.Int32   ).Value = config.FtpPort;
         cmd.Parameters.Add("ftpUser",       OracleDbType.Varchar2).Value = config.FtpUser;
-        if (!string.IsNullOrEmpty(config.FtpPassword))
+        if (updatePassword)
             cmd.Parameters.Add("ftpPassword", OracleDbType.Varchar2).Value = config.FtpPassword;
         cmd.Parameters.Add("ftpTargetPath", OracleDbType.Varchar2).Value = config.FtpTargetPath;
         cmd.Parameters.Add("enabled",       OracleDbType.Int32   ).Value = config.Enabled ? 1 : 0;
         cmd.Parameters.Add("remark",        OracleDbType.Varchar2).Value = (object?)config.Remark ?? DBNull.Value;
-        cmd.Parameters.Add("id",            OracleDbType.Int64   ).Value = config.Id;
+        cmd.Parameters.Add("id",            OracleDbType.Decimal ).Value = config.Id;
 
         var affected = await cmd.ExecuteNonQueryAsync(ct);
         return affected > 0;

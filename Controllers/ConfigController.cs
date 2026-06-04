@@ -76,10 +76,10 @@ public class ConfigController : ControllerBase
         var entity = ToEntity(req);
         entity.Id = id;
 
-        // 有传新密码则加密覆盖，否则传空字符串让仓储保留原密码
-        entity.FtpPassword = string.IsNullOrWhiteSpace(req.FtpPassword)
+        // 有传新密码则加密覆盖；空或占位提示文案则不改密码
+        entity.FtpPassword = ShouldKeepExistingPassword(req.FtpPassword)
             ? string.Empty
-            : _passwordProtector.Protect(req.FtpPassword!);
+            : _passwordProtector.Protect(req.FtpPassword!.Trim());
 
         var updated = await _repo.UpdateAsync(entity, ct);
         return updated ? NoContent() : NotFound(new { error = $"ID={id} 的配置不存在。" });
@@ -96,6 +96,15 @@ public class ConfigController : ControllerBase
     }
 
     // ─────────────────────────────── helpers ────────────────────────────────
+
+    private static bool ShouldKeepExistingPassword(string? password)
+    {
+        if (string.IsNullOrWhiteSpace(password))
+            return true;
+        var p = password.Trim();
+        return p.Contains("***", StringComparison.Ordinal)
+            || p.Contains("已加密", StringComparison.OrdinalIgnoreCase);
+    }
 
     private static FtpUploadConfig ToEntity(ConfigRequest r) => new()
     {
