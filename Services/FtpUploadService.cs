@@ -466,9 +466,8 @@ public class FtpUploadService : IFtpUploadService
         }
 
         var waferNos = WaferNoResolver.ResolveList(request);
-        var waferNosRaw = WaferNoResolver.GetRawWaferNos(request);
-        if (!string.IsNullOrWhiteSpace(waferNosRaw))
-            vars[WaferNoResolver.WfNosKey] = waferNosRaw;
+        if (waferNos.Count > 0)
+            vars[WaferNoResolver.WfNosKey] = WaferNoResolver.JoinNormalized(waferNos);
 
         IReadOnlyList<FtpUploadConfig> configs;
         if (request.ConfigIds is null || request.ConfigIds.Count == 0)

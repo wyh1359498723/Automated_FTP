@@ -31,7 +31,7 @@ public class UploadRequest
     public List<long>? ConfigIds { get; set; }
 
     /// <summary>
-    /// 片号组，逗号分隔，如 "1,2,3,4"。查找文件时会逐个片号注入 {wf_no} 参与源路径/关键词匹配。
+    /// 片号组，逗号分隔，如 "1,2,3,4"（纯数字会规范为 "01,02,03,04" 注入 {wf_no}）。
     /// 也可在 variables.wf_nos 中传入（本字段优先）。
     /// </summary>
     public string? WaferNos { get; set; }
