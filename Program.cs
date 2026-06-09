@@ -1,11 +1,9 @@
 using Automated_FTP.Infrastructure.Email;
-using Automated_FTP.Infrastructure.Security;
 using Automated_FTP.Repositories;
 using Automated_FTP.Services;
 using Automated_FTP.Services.Ftp;
 using Automated_FTP.Services.Processors;
 using Automated_FTP.Services.Renamers;
-using Microsoft.AspNetCore.DataProtection;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -29,19 +27,6 @@ builder.Services.Configure<OracleOptions>(builder.Configuration.GetSection("Orac
 builder.Services.Configure<UploadOptions>(builder.Configuration.GetSection("Upload"));
 builder.Services.Configure<Automated_FTP.Infrastructure.Email.EmailAlertOptions>(
     builder.Configuration.GetSection("EmailAlert"));
-
-// DataProtection（FTP 密码加解密）
-var dpKeysPath = builder.Configuration.GetValue<string>("DataProtection:KeysPath") ?? "App_Data/DataProtection-Keys";
-var dpAppName = builder.Configuration.GetValue<string>("DataProtection:ApplicationName") ?? "Automated_FTP";
-var keysDir = Path.IsPathRooted(dpKeysPath)
-    ? dpKeysPath
-    : Path.Combine(builder.Environment.ContentRootPath, dpKeysPath);
-Directory.CreateDirectory(keysDir);
-builder.Services
-    .AddDataProtection()
-    .SetApplicationName(dpAppName)
-    .PersistKeysToFileSystem(new DirectoryInfo(keysDir));
-builder.Services.AddSingleton<PasswordProtector>();
 
 // 仓储
 builder.Services.AddScoped<IConfigRepository, OracleConfigRepository>();

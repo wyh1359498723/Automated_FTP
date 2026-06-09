@@ -5,7 +5,7 @@ namespace Automated_FTP.Models;
 /// <summary>
 /// 新增 / 修改配置行时的请求体。
 /// ID 由 Oracle IDENTITY 自动生成，CreatedAt / UpdatedAt 由数据库默认值维护，均不需要传。
-/// FtpPassword 传明文，接口层会自动调用 PasswordProtector 加密后再入库。
+/// FtpPassword 传明文，直接存库。
 /// </summary>
 public class ConfigRequest
 {
@@ -49,7 +49,7 @@ public class ConfigRequest
     [Required, MaxLength(100)]
     public string FtpUser { get; set; } = string.Empty;
 
-    /// <summary>明文密码，接口会自动加密后存库。更新时若为空则保留原密码。</summary>
+    /// <summary>FTP 密码明文。更新时若为空则保留原密码。</summary>
     [MaxLength(500)]
     public string? FtpPassword { get; set; }
 

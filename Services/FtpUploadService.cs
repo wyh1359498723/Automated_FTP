@@ -1,6 +1,5 @@
 using System.Diagnostics;
 using Automated_FTP.Infrastructure.Email;
-using Automated_FTP.Infrastructure.Security;
 using Automated_FTP.Models;
 using Automated_FTP.Repositories;
 using Automated_FTP.Services.Ftp;
@@ -33,7 +32,6 @@ public class FtpUploadService : IFtpUploadService
     private readonly FileProcessorRegistry _processors;
     private readonly FileRenamerRegistry _renamers;
     private readonly FileTransferClientFactory _transferFactory;
-    private readonly PasswordProtector _passwordProtector;
     private readonly IAlertEmailService _alertEmail;
     private readonly UploadOptions _options;
     private readonly ILogger<FtpUploadService> _logger;
@@ -45,7 +43,6 @@ public class FtpUploadService : IFtpUploadService
         FileProcessorRegistry processors,
         FileRenamerRegistry renamers,
         FileTransferClientFactory transferFactory,
-        PasswordProtector passwordProtector,
         IAlertEmailService alertEmail,
         IOptions<UploadOptions> options,
         ILogger<FtpUploadService> logger)
@@ -56,7 +53,6 @@ public class FtpUploadService : IFtpUploadService
         _processors = processors;
         _renamers = renamers;
         _transferFactory = transferFactory;
-        _passwordProtector = passwordProtector;
         _alertEmail = alertEmail;
         _options = options.Value;
         _logger = logger;
@@ -197,9 +193,8 @@ public class FtpUploadService : IFtpUploadService
             var sw = Stopwatch.StartNew();
             try
             {
-                var plainPwd = _passwordProtector.Unprotect(config.FtpPassword);
                 await using var client = _transferFactory.Create(config.FtpProtocol);
-                await client.ConnectAsync(config.FtpHost, config.FtpPort, config.FtpUser, plainPwd, _options.DefaultFtpTimeoutSeconds, ct);
+                await client.ConnectAsync(config.FtpHost, config.FtpPort, config.FtpUser, config.FtpPassword, _options.DefaultFtpTimeoutSeconds, ct);
                 cfgResult.TargetPathReachable = await client.TestTargetReachableAsync(targetDir, ct);
                 cfgResult.Success = true;
             }
@@ -288,19 +283,10 @@ public class FtpUploadService : IFtpUploadService
         var processor = _processors.Resolve(config.ProcessorName);
         var renamer = _renamers.Resolve(config.RenamerName);
 
-        string plainPwd;
-        try { plainPwd = _passwordProtector.Unprotect(config.FtpPassword); }
-        catch (Exception ex)
-        {
-            cfgResult.Success = false;
-            cfgResult.Error = ex.Message;
-            return false;
-        }
-
         await using var client = _transferFactory.Create(config.FtpProtocol);
         try
         {
-            await client.ConnectAsync(config.FtpHost, config.FtpPort, config.FtpUser, plainPwd, _options.DefaultFtpTimeoutSeconds, ct);
+            await client.ConnectAsync(config.FtpHost, config.FtpPort, config.FtpUser, config.FtpPassword, _options.DefaultFtpTimeoutSeconds, ct);
             var targetDirs = matches
                 .Select(m => _renderer.Render(config.FtpTargetPath, m.Vars, keepUnmatched: false))
                 .Distinct(StringComparer.OrdinalIgnoreCase);

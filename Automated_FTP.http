@@ -53,11 +53,3 @@ Content-Type: application/json
     "wflot": "WL202605270001"
   }
 }
-
-### 把明文密码加密成可入库的密文
-POST {{Automated_FTP_HostAddress}}/api/diagnostics/protect-password
-Content-Type: application/json
-
-{
-  "plainText": "your-plain-password"
-}

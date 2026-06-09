@@ -15,7 +15,6 @@ API 调用者传入业务键 `(custCode, device, cp)` 与变量字典（如 `wfl
 - `Dapper` —— 配置表查询
 - `FluentFTP` —— FTP / FTPS
 - `SSH.NET` —— SFTP
-- `Microsoft.AspNetCore.DataProtection` —— FTP 密码加解密
 
 ## 配置
 
@@ -26,18 +25,14 @@ API 调用者传入业务键 `(custCode, device, cp)` 与变量字典（如 `wfl
   "Oracle": {
     "ConnectionString": "User Id=...;Password=...;Data Source=...;"
   },
-  "DataProtection": {
-    "KeysPath": "App_Data/DataProtection-Keys",
-    "ApplicationName": "Automated_FTP"
-  },
   "Upload": {
-    "ConfigTableName": "FTP_UPLOAD_CONFIG",
+    "ConfigTableName": "MMS_FTP_UPLOAD_CONFIG",
     "DefaultFtpTimeoutSeconds": 30
   }
 }
 ```
 
-> `DataProtection:KeysPath` 必须可写、跨进程稳定。生产环境建议使用相对路径或绝对路径，**不要随意删除**该目录，否则原先加密的 FTP 密码将无法解密。
+> `FTP_PASSWORD` 在库中**明文存储**；配置 API 查询时会返回明文密码供管理页展示。
 
 ## 数据表
 
@@ -81,14 +76,6 @@ API 调用者传入业务键 `(custCode, device, cp)` 与变量字典（如 `wfl
 
 只测 FTP 连接和目标目录可达性。
 
-### `POST /api/diagnostics/protect-password`
-
-把明文密码转密文，DBA/运维拿到结果后写入 `FTP_PASSWORD` 字段。Body：
-
-```json
-{ "plainText": "your-plain-password" }
-```
-
 ## 占位符
 
 可在 `SOURCE_PATH` / `SOURCE_KEYWORD` / `FTP_TARGET_PATH` / `RENAMER_PARAM` 中使用：
@@ -131,8 +118,6 @@ Services/
   Processors/  IFileProcessor / FileProcessorRegistry / PassThroughProcessor
   Renamers/    IFileRenamer / FileRenamerRegistry / TemplateRenamer / KeepOriginalRenamer
   Ftp/         IFileTransferClient / FtpTransferClient / SftpTransferClient / FileTransferClientFactory
-Infrastructure/Security/
-  PasswordProtector.cs
 Database/
   FTP_UPLOAD_CONFIG.sql
 ```

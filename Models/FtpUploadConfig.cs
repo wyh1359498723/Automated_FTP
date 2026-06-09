@@ -35,7 +35,7 @@ public class FtpUploadConfig
     public int FtpPort { get; set; } = 21;
     public string FtpUser { get; set; } = string.Empty;
 
-    /// <summary>密文存储；运行时由 PasswordProtector 解密后再用。</summary>
+    /// <summary>FTP 密码，明文存储。</summary>
     public string FtpPassword { get; set; } = string.Empty;
 
     /// <summary>远端目标目录，可含占位符。</summary>
